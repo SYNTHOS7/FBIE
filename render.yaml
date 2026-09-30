@@ -9,9 +9,11 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.10
-      - key: FBIE_MODE
-        value: demo
       - key: CORS_ORIGINS
         sync: false
       - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
         sync: false

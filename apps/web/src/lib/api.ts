@@ -1,124 +1,111 @@
-import type { Coverage, Region, RiskResult, Variable, Verification } from "./types";
+import type { Coverage, FailureMode, ModelStatus, Region, RiskResult, Variable, Verification } from "./types";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
-
 export const fallbackRegions: Region[] = [
-  { id: "mumbai", name: "Mumbai", state: "Maharashtra", lat: 19.08, lon: 72.88 },
-  { id: "pune", name: "Pune", state: "Maharashtra", lat: 18.52, lon: 73.86 },
-  { id: "delhi", name: "Delhi", state: "Delhi", lat: 28.61, lon: 77.21 },
-  { id: "jaipur", name: "Jaipur", state: "Rajasthan", lat: 26.91, lon: 75.79 },
-  { id: "ahmedabad", name: "Ahmedabad", state: "Gujarat", lat: 23.02, lon: 72.57 },
-  { id: "bengaluru", name: "Bengaluru", state: "Karnataka", lat: 12.97, lon: 77.59 },
-  { id: "chennai", name: "Chennai", state: "Tamil Nadu", lat: 13.08, lon: 80.27 },
-  { id: "kolkata", name: "Kolkata", state: "West Bengal", lat: 22.57, lon: 88.36 },
+  { id: "mumbai", name: "Mumbai", state: "Maharashtra" },
+  { id: "delhi", name: "Delhi", state: "Delhi" },
+  { id: "jaipur", name: "Jaipur", state: "Rajasthan" },
+  { id: "ahmedabad", name: "Ahmedabad", state: "Gujarat" },
+  { id: "bengaluru", name: "Bengaluru", state: "Karnataka" },
+  { id: "kolkata", name: "Kolkata", state: "West Bengal" },
 ];
-
 export const fallbackCoverage: Coverage = {
-  mode: "demo",
-  disclaimer: "Illustrative interface. No trained model or live forecast risk is available yet.",
+  mode: "demo", disclaimer: "The API is unavailable. This interface contains no measured risk.",
   regions: fallbackRegions,
-  variables: [
-    { id: "rainfall", label: "Rainfall" },
-    { id: "temperature", label: "Temperature" },
-    { id: "wind", label: "Wind" },
-  ],
+  variables: [{ id: "rainfall", label: "Rainfall", unit: "mm" }, { id: "temperature", label: "Temperature", unit: "°C" }, { id: "wind", label: "Wind", unit: "km/h" }],
   lead_days: Array.from({ length: 10 }, (_, i) => i + 1),
 };
-
 export function fallbackRisk(regionId: string, variable: Variable, leadDay: number): RiskResult {
-  const region = fallbackRegions.find((entry) => entry.id === regionId) || fallbackRegions[0];
-  const labels = {
-    rainfall: {
-      summary: "Explore how rainfall forecasts could differ from what eventually happens.",
-      modes: ["Rain may fall in a different location", "Arrival time may shift", "Amount may differ"],
-    },
-    temperature: {
-      summary: "Explore how temperature forecasts could differ from what eventually happens.",
-      modes: ["A hotter or cooler day", "Peak temperature at a different time"],
-    },
-    wind: {
-      summary: "Explore how wind forecasts could differ from what eventually happens.",
-      modes: ["Stronger or weaker wind", "Direction or timing may change"],
-    },
-  }[variable];
   return {
-    mode: "demo",
-    disclaimer: "Demonstration scenario only. This is not an actual weather forecast or measured risk.",
-    region,
-    variable,
-    lead_day: leadDay,
-    risk: { level: "illustrative", probability: null, summary: labels.summary, possible_failure_modes: labels.modes },
-    evidence: [
-      { title: "Forecast agreement", detail: "A future model will compare available forecasts and identify meaningful disagreement." },
-      { title: "Past outcomes", detail: "A verified archive will show how similar forecasts performed for this place and season." },
-      { title: "Latest changes", detail: "Successive forecast runs will reveal whether predicted conditions are moving or stabilizing." },
-    ],
-    historical_cases: [],
-    model: { status: "not_trained", version: null },
-    data_freshness: { status: "synthetic_scenario" },
+    mode: "demo", disclaimer: "The API is unavailable. No forecast or measured risk can be shown.",
+    region: fallbackRegions.find((item) => item.id === regionId) || fallbackRegions[0], variable, lead_day: leadDay,
+    risk: { level: "unavailable", probability: null, summary: "Forecast risk is unavailable for this selection.", possible_failure_modes: [] },
+    evidence: [], historical_cases: [], model: { status: "unavailable", version: null },
   };
 }
-
 export const fallbackVerification: Verification = {
-  mode: "demo",
-  disclaimer: "No archived forecasts have been verified against observations yet.",
-  summary: { verified_predictions: 0, skill: null },
-  cases: [],
+  mode: "demo", disclaimer: "Verification data is unavailable.",
+  summary: { verified_predictions: 0, skill: null }, cases: [],
 };
-
-async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, { signal, cache: "no-store" });
-  if (!response.ok) throw new Error(`API ${response.status}`);
+async function request<T>(path: string, signal?: AbortSignal, options?: RequestInit): Promise<T> {
+  const response = await fetch(API_BASE + path, { ...options, signal, cache: "no-store" });
+  if (!response.ok) throw new Error("API " + response.status);
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
-
 export async function getCoverage(signal?: AbortSignal): Promise<{ data: Coverage; connected: boolean }> {
   try {
     const data = await request<Coverage>("/v1/coverage", signal);
-    const variables = Array.isArray(data.variables) ? data.variables : fallbackCoverage.variables;
-    return { data: { ...fallbackCoverage, ...data, variables }, connected: true };
-  } catch {
-    return { data: fallbackCoverage, connected: false };
-  }
+    if (!Array.isArray(data.regions) || !Array.isArray(data.lead_days)) throw new Error("Invalid coverage response");
+    return { data: { ...data, variables: Array.isArray(data.variables) ? data.variables : fallbackCoverage.variables }, connected: true };
+  } catch { return { data: fallbackCoverage, connected: false }; }
 }
-
+function modes(raw: unknown): FailureMode[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item) => {
+    if (typeof item === "string") return { name: item, probability: null };
+    const value = item as Record<string, unknown>;
+    return { name: String(value.name || value.label || "Forecast error"), probability: typeof value.probability === "number" && value.probability >= 0 && value.probability <= 1 ? value.probability : null };
+  });
+}
 export async function getRisk(regionId: string, variable: Variable, leadDay: number, signal?: AbortSignal): Promise<{ data: RiskResult; connected: boolean }> {
   try {
     const query = new URLSearchParams({ region_id: regionId, variable, lead_day: String(leadDay) });
-    const raw = await request<Record<string, unknown>>(`/v1/risk?${query}`, signal);
-    if (raw.risk && raw.evidence) return { data: raw as unknown as RiskResult, connected: true };
-    const region = (raw.region as Region | undefined) || fallbackRegions.find((entry) => entry.id === regionId) || fallbackRegions[0];
+    const raw = await request<Record<string, unknown>>("/v1/risk?" + query, signal);
+    const live = raw.mode === "live";
+    const legacy = raw.risk && typeof raw.risk === "object" ? raw.risk as Record<string, unknown> : null;
+    const candidate = typeof raw.probability === "number" ? raw.probability : typeof legacy?.probability === "number" ? legacy.probability : null;
     const drivers = Array.isArray(raw.drivers) ? raw.drivers as Array<Record<string, unknown>> : [];
-    const failureModes = Array.isArray(raw.failure_modes) ? raw.failure_modes as Array<Record<string, unknown>> : [];
-    const data: RiskResult = {
-      mode: raw.mode === "live" ? "live" : "demo",
-      disclaimer: typeof raw.disclaimer === "string" ? raw.disclaimer : undefined,
-      region,
-      variable,
-      lead_day: leadDay,
-      issued_at: typeof raw.forecast_time === "string" ? raw.forecast_time : undefined,
-      valid_at: typeof raw.valid_time === "string" ? raw.valid_time : undefined,
+    return { connected: true, data: {
+      id: typeof raw.id === "string" ? raw.id : undefined,
+      mode: live ? "live" : "demo", disclaimer: typeof raw.disclaimer === "string" ? raw.disclaimer : undefined,
+      region: raw.region && typeof raw.region === "object" ? raw.region as Region : fallbackRegions.find((item) => item.id === regionId) || fallbackRegions[0],
+      variable, lead_day: leadDay,
+      issued_at: typeof raw.forecast_time === "string" ? raw.forecast_time : typeof raw.issued_at === "string" ? raw.issued_at : null,
+      valid_at: typeof raw.valid_time === "string" ? raw.valid_time : typeof raw.valid_at === "string" ? raw.valid_at : null,
       risk: {
-        level: typeof raw.risk_level === "string" ? raw.risk_level : "illustrative",
-        probability: typeof raw.probability === "number" ? raw.probability : null,
-        summary: typeof raw.headline === "string" ? raw.headline : "Forecast reliability is unavailable.",
-        possible_failure_modes: failureModes.map((mode) => String(mode.name || mode.label || "Possible forecast error")),
+        level: typeof raw.risk_level === "string" ? raw.risk_level : typeof legacy?.level === "string" ? legacy.level : "unavailable",
+        probability: live && candidate !== null && candidate >= 0 && candidate <= 1 ? candidate : null,
+        summary: typeof raw.headline === "string" ? raw.headline : typeof legacy?.summary === "string" ? legacy.summary : "Forecast risk is unavailable.",
+        possible_failure_modes: modes(raw.failure_modes || legacy?.possible_failure_modes),
       },
-      evidence: drivers.map((driver) => ({ title: String(driver.label || driver.title || "Signal"), detail: String(driver.detail || "") })),
-      historical_cases: [],
-      model: { status: raw.mode === "live" ? "published" : "not_trained", version: typeof raw.model_version === "string" ? raw.model_version : null },
-      data_freshness: { status: raw.mode === "live" ? "published" : "synthetic_scenario" },
-    };
-    return { data, connected: true };
-  } catch {
-    return { data: fallbackRisk(regionId, variable, leadDay), connected: false };
-  }
+      explanation: typeof raw.explanation === "string" ? raw.explanation : undefined,
+      evidence: drivers.map((item) => ({ title: String(item.label || item.title || "Signal"), detail: String(item.detail || "") })),
+      historical_cases: Array.isArray(raw.historical_cases) ? raw.historical_cases : [],
+      model: { status: live ? "published" : "not_trained", version: typeof raw.model_version === "string" ? raw.model_version : null },
+      source: raw.source && (typeof raw.source === "string" || typeof raw.source === "object") ? raw.source as RiskResult["source"] : null,
+      provenance: raw.provenance && typeof raw.provenance === "object" ? raw.provenance as Record<string, unknown> : null,
+      forecast_value: live && typeof raw.forecast_value === "number" ? raw.forecast_value : null,
+      error_threshold: live && typeof raw.error_threshold === "number" ? raw.error_threshold : null,
+      predicted_error_p10: live && typeof raw.predicted_error_p10 === "number" ? raw.predicted_error_p10 : null,
+      predicted_error_p90: live && typeof raw.predicted_error_p90 === "number" ? raw.predicted_error_p90 : null,
+    }};
+  } catch { return { data: fallbackRisk(regionId, variable, leadDay), connected: false }; }
 }
-
 export async function getVerification(signal?: AbortSignal): Promise<{ data: Verification; connected: boolean }> {
   try {
-    return { data: await request<Verification>("/v1/verification", signal), connected: true };
+    const data = await request<Verification>("/v1/verification", signal);
+    if (!data.summary || !Array.isArray(data.cases)) throw new Error("Invalid verification response");
+    return { data, connected: true };
+  } catch { return { data: fallbackVerification, connected: false }; }
+}
+export async function getSavedLocations(token: string): Promise<Region[]> {
+  const data = await request<{ locations: Region[] }>("/v1/me/saved-locations", undefined, { headers: { Authorization: "Bearer " + token } });
+  return data.locations;
+}
+export async function saveLocation(regionId: string, token: string): Promise<void> {
+  await request("/v1/me/saved-locations", undefined, { method: "POST", headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" }, body: JSON.stringify({ region_id: regionId }) });
+}
+export async function deleteSavedLocation(regionId: string, token: string): Promise<void> {
+  await request("/v1/me/saved-locations/" + encodeURIComponent(regionId), undefined, { method: "DELETE", headers: { Authorization: "Bearer " + token } });
+}
+
+export async function getModelStatus(signal?: AbortSignal): Promise<{ data: ModelStatus; connected: boolean }> {
+  try {
+    const data = await request<ModelStatus>("/v1/models/status", signal);
+    if (typeof data.status !== "string") throw new Error("Invalid model status response");
+    return { data, connected: true };
   } catch {
-    return { data: fallbackVerification, connected: false };
+    return { data: { status: "unavailable", active_model_version: null, message: "Model status cannot be reached." }, connected: false };
   }
 }

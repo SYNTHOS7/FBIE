@@ -1,0 +1,27 @@
+name: Research forecast cycle
+
+on:
+  workflow_dispatch:
+  schedule:
+    # The archived 00 UTC forecast run normally becomes available hours later.
+    - cron: '15 8 * * *'
+
+jobs:
+  publish-and-verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+      FBIE_MODEL_CODE: ${{ vars.FBIE_MODEL_CODE }}
+    steps:
+      - uses: actions/checkout@v4
+        if: env.SUPABASE_DATABASE_URL != '' && env.FBIE_MODEL_CODE != ''
+      - uses: actions/setup-python@v5
+        if: env.SUPABASE_DATABASE_URL != '' && env.FBIE_MODEL_CODE != ''
+        with:
+          python-version: '3.12'
+      - run: pip install -r pipelines/requirements.txt
+        if: env.SUPABASE_DATABASE_URL != '' && env.FBIE_MODEL_CODE != ''
+      - run: python -m pipelines.run_current
+        if: env.SUPABASE_DATABASE_URL != '' && env.FBIE_MODEL_CODE != ''

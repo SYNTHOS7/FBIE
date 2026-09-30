@@ -1,62 +1,56 @@
 # FBIE — Forecast Bust Intelligence Engine
 
-FBIE helps people understand where an Indian weather forecast may fail, how it may fail, and what evidence supports the warning. This repository contains a public website, API, database schema, and a reproducible research baseline.
+FBIE helps people see **where a weather forecast may be unreliable, what evidence supports that estimate, and how earlier estimates turned out**. The site opens with a plain-language explanation, then offers a forecast explorer, verification history, methodology, and optional saved places.
 
-## Current status
+This repository is a deployable **research prototype**. Its measurable first release covers daily rainfall at six Indian city points and forecast days 1–10. Until a real historical dataset passes the publication gate and a current batch is published, the site labels the experience as a demonstration and shows **no invented risk percentages**. ERA5 comparisons are reanalysis proxies, not rain-gauge observations. The advanced multivariate, ensemble, spatial and failure-mode ideas in the concept documents remain research milestones.
 
-The website is a **clearly labelled demonstration**. It has no operational weather feed, verified historical archive, or approved live model. Demo screens show no numeric risk probability. Do not use them for weather decisions. The API can read approved, published predictions from Supabase Postgres when such records exist, but the data ingestion and publication pipeline has not been connected to a provider.
+## Architecture
 
-## Repository layout
-
-| Component | Directory | Deployment |
+| Part | Code | Host |
 | --- | --- | --- |
-| Next.js website | `apps/web` | Vercel |
-| FastAPI service | `services/api` | Render |
-| CSV validation and normalization | `pipelines` | Offline jobs |
-| Historical-rate baseline and evaluation | `ml` | Offline jobs |
-| Database schema and publication function | `supabase/migrations` | Supabase Postgres |
+| Public website and account UI | `apps/web` | Vercel |
+| Published-data and saved-place API | `services/api` | Render |
+| Auth, data, provenance and verification | `supabase/migrations` | Supabase |
+| Archive, train, publish and verify jobs | `pipelines`, `ml` | GitHub Actions / local research runner |
+
+See [system architecture](docs/ARCHITECTURE.md) and [product contract](docs/PRODUCT.md).
 
 ## Run locally
 
-Requires Node.js 22+ and Python 3.12+.
+Use Node.js 22+ and Python 3.12+. From `services/api`, create a virtual environment, install `requirements.txt`, and run `uvicorn app.main:app --reload --port 8000`. From `apps/web`, run `npm ci` and `npm run dev`. Open `http://localhost:3000`. Without Supabase or a published model, the website and API show the labelled demonstration. Copy the `.env.example` files for local configuration; keep real `.env` files out of Git.
+
+## Connect the hosts
+
+1. Create a Supabase project and apply `supabase/migrations/*.sql` in filename order. The migrations create six research locations but **no weather predictions**.
+2. On Render, deploy this repository with `render.yaml`. Set `DATABASE_URL` to the Supabase Postgres connection string, `CORS_ORIGINS` to the exact Vercel origin, `SUPABASE_URL` to the project URL, and `SUPABASE_ANON_KEY` to its public/anon key. The API health endpoint is `/health`.
+3. On Vercel, import this GitHub repository with **Root Directory `apps/web`**. Set `NEXT_PUBLIC_API_BASE_URL` to the Render API URL and `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` to the Supabase public values. Configure Auth redirect URLs in Supabase.
+4. Keep `SUPABASE_DATABASE_URL` in a trusted runner only; never put a database password or service-role key in `NEXT_PUBLIC_*` variables.
+
+The website and API can be deployed before research data is ready. In that state they remain visibly in demo/no-data mode.
+
+## Produce measured rainfall results
+
+Install `pipelines/requirements.txt` in a trusted Python 3.12 environment and set `SUPABASE_DATABASE_URL` to a writable Supabase Postgres connection. The first backfill uses [Open-Meteo Single Runs](https://open-meteo.com/en/docs/single-runs-api) ECMWF forecasts and [ERA5 reanalysis](https://open-meteo.com/en/docs/historical-weather-api), aligned to UTC daily rainfall totals. The free API is for non-commercial research and requires [attribution](https://open-meteo.com/en/terms); a commercial launch needs an appropriate data plan and source review.
 
 ```bash
-cd services/api
-python -m venv .venv
-# Activate .venv using your shell, then:
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+python -m pipelines.backfill --locations pipelines/research_locations.json --start-run 2026-06-01 --end-run 2026-07-31 --output data/pairs.csv --raw-dir data/raw
+python -m ml.research_train data/pairs.csv --output data/model
+python -m ml.register_model --model data/model/model.json --evaluation data/model/evaluation.json --code research-v1
+python -m pipelines.run_current --model-code research-v1
 ```
 
-In another terminal:
+The run dates above are examples; select a completed historical period. Backfill keeps source responses, checksums and a failure manifest. Training splits issuance times chronologically into training, calibration and untouched test periods. Registration refuses a model that lacks provenance, enough test cases, or improvement over the simple reference. `run_current` publishes a complete current 00 UTC forecast batch through the database publication gate and verifies older published days as the reference becomes available. See [pipeline details](pipelines/README.md).
+
+For daily operation, add repository secret `SUPABASE_DATABASE_URL` and repository variable `FBIE_MODEL_CODE` to GitHub Actions, then run the **Research forecast cycle** workflow once manually. Its scheduled run starts after 08:00 UTC. The workflow skips data steps until both values are configured.
+
+## Checks
 
 ```bash
-cd apps/web
-npm ci
-npm run dev
+cd apps/web && npm ci && npm run lint && npm run build
+cd services/api && pip install -r requirements.txt && python -m pytest
+# From repository root:
+python -m unittest discover -s ml -p 'test_*.py'
+python -m unittest discover -s pipelines -p 'test_*.py'
 ```
 
-The website opens at http://localhost:3000. Set `NEXT_PUBLIC_API_BASE_URL` from `apps/web/.env.example` if the API uses a different port. When the API is unavailable, the browser displays a labelled local demonstration.
-
-Run checks:
-
-```bash
-cd apps/web && npm run build
-cd services/api && python -m pytest
-# From the repository root:
-python -m unittest ml.test_baseline
-```
-
-## Connect Supabase, Render, and Vercel
-
-Apply all SQL files in `supabase/migrations` in filename order to your Supabase project. The database begins empty. On Render, use `render.yaml` to create the FastAPI web service and set `DATABASE_URL` to the Supabase Postgres connection string. Set `CORS_ORIGINS` to the exact Vercel site origin. On Vercel, import this GitHub repository with **Root Directory = `apps/web`** and set `NEXT_PUBLIC_API_BASE_URL` to the Render service URL.
-
-Keep database credentials on Render only. The browser never receives a service role key. The frontend does not yet expose sign-in or saved locations; the Supabase table and row policies prepare that feature.
-
-## Scientific path to operational results
-
-Use `pipelines/paired.py` to validate a real paired forecast and observation CSV. `pipelines/normalize.py` writes a canonical copy and checksums. `ml/baseline.py` trains and evaluates a transparent historical-rate baseline on a chronological holdout. These tools do not fetch weather data or publish a model. Before showing live risk, establish an approved source archive, align observations, test geographic and temporal generalization, check calibration against simple baselines, then publish complete batches through the database publication function. See `pipelines/SOURCES.md` for source and license considerations.
-
-## Product notes
-
-See `docs/PRODUCT.md` for the product contract. Feedback and contributions can start with a GitHub issue.
+GitHub Actions runs those checks on pushes and pull requests. Hosted migrations, live source connectivity, model skill and the deployed website must also be checked in the target accounts; no credentials or operational predictions are included in this repository.

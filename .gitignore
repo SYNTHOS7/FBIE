@@ -28,3 +28,5 @@ apps/web/CLAUDE.md
 qa-*.png
 qa-*.jpg
 qa-playwright.cjs
+
+*.tsbuildinfo
