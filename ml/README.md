@@ -21,13 +21,18 @@ matching, source quality review, rolling backtests, confidence intervals and
 evidence of useful skill. `model.json` is not automatically approved for
 publication. Do not present its output as a live operational risk forecast.
 
-The executable research path is `python -m ml.research_train data/pairs.csv
---output data/model`. It reserves the latest issue times for untouched testing,
+The executable research path is `python -m ml.research_train data/processed/pairs.csv
+--output data/processed/model`. It reserves the latest issue times for untouched testing,
 uses an earlier chronological slice for logistic probability calibration, and
-fits all thresholds using the oldest training slice. The output includes the
+fits all thresholds using the oldest training slice. It removes ten issued days
+at each split boundary so that rainfall valid dates cannot cross from one
+period into another. The output records split boundaries and the number of
+distinct issued days. At least 125 issued days are normally needed to retain
+30 training, 15 calibration and 20 untouched test issue days after the gaps.
+The output includes the
 calibrated model JSON and held-out Brier score against a historical-rate
-reference. `python -m ml.register_model --model data/model/model.json
---evaluation data/model/evaluation.json --code research-v1` enforces minimum
-sample and held-out improvement gates before storing the immutable artifact in
+reference and expected calibration error. `python -m ml.register_model --model data/processed/model/model.json
+--evaluation data/processed/model/evaluation.json --code research-v1` enforces minimum
+sample, held-out improvement, and calibration gates before storing the immutable artifact in
 Supabase. This remains a research estimate until geographic and temporal
 representativeness are reviewed.

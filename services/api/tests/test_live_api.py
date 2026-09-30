@@ -174,3 +174,59 @@ def test_coverage_counts_unique_cells_and_latest_run_separately(monkeypatch):
     assert "SELECT DISTINCT region_id, variable, lead_day" in queries[0]
     assert "forecast_time" not in queries[0]
     assert "max(forecast_time)" in queries[1]
+
+
+def test_verification_metrics_require_sufficient_single_source_data(monkeypatch):
+    from app import repository
+
+    class FakeCursor:
+        def __init__(self, summary):
+            self.summary = summary
+            self.queries = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, query, *args):
+            self.queries.append(query)
+
+        def fetchone(self):
+            return self.summary
+
+        def fetchall(self):
+            if "AS bucket" in self.queries[-1]:
+                return [{"bucket": 4, "count": 100, "mean_probability": 0.45,
+                         "observed_rate": 0.4}]
+            return []
+
+    class FakeConnection:
+        def __init__(self, cursor):
+            self.fake_cursor = cursor
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def cursor(self):
+            return self.fake_cursor
+
+    summary = {"verified_predictions": 100, "valid_days": 10, "model_count": 1,
+               "reference_count": 1, "model_version": "research-v1",
+               "reference_kind": "reanalysis_proxy", "mean_predicted_risk": 0.45,
+               "bust_rate": 0.4, "brier_score": 0.21}
+    monkeypatch.setattr(repository, "connect", lambda: FakeConnection(FakeCursor(summary)))
+    result = repository.verification()
+    assert result["summary"]["brier_score"] == 0.21
+    assert result["summary"]["calibration_bins"][0]["count"] == 100
+    assert result["summary"]["reference_kind"] == "reanalysis_proxy"
+
+    summary["valid_days"] = 9
+    monkeypatch.setattr(repository, "connect", lambda: FakeConnection(FakeCursor(summary)))
+    result = repository.verification()
+    assert result["summary"]["brier_score"] is None
+    assert result["summary"]["calibration_bins"] == []

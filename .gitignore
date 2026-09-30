@@ -30,3 +30,4 @@ qa-*.jpg
 qa-playwright.cjs
 
 *.tsbuildinfo
+supabase/.temp/

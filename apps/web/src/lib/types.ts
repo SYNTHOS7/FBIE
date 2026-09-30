@@ -22,9 +22,16 @@ export interface VerificationCase {
   id: string; region_name: string; variable: string; forecast_date: string; observed_date?: string;
   predicted_risk?: number | null; outcome: string; summary: string; reference_kind?: string | null;
 }
+export interface CalibrationBin { lower: number; upper: number; count: number; mean_probability: number; observed_rate: number }
+export interface VerificationSummary {
+  verified_predictions: number; skill: number | null; calibration?: number | null;
+  brier_score?: number | null; mean_predicted_risk?: number | null;
+  bust_rate?: number | null; calibration_bins?: CalibrationBin[];
+  reference_kind?: string | null;
+}
 export interface Verification {
   mode: "demo" | "live"; disclaimer?: string; reference_kind?: string | null;
-  summary: { verified_predictions: number; skill: number | null; calibration?: number | null };
+  summary: VerificationSummary;
   cases: VerificationCase[];
 }
 

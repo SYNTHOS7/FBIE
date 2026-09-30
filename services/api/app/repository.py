@@ -204,7 +204,14 @@ def verification(limit: int = 30) -> dict:
     with connect() as conn, conn.cursor() as cur:
         cur.execute(
             """SELECT count(*) AS verified_predictions,
-                      avg(CASE WHEN v.busted THEN 1.0 ELSE 0.0 END) AS bust_rate
+                      count(DISTINCT p.valid_at::date) AS valid_days,
+                      count(DISTINCT m.code) AS model_count,
+                      count(DISTINCT v.reference_kind) AS reference_count,
+                      min(m.code) AS model_version,
+                      min(v.reference_kind) AS reference_kind,
+                      avg(p.risk_probability) AS mean_predicted_risk,
+                      avg(CASE WHEN v.busted THEN 1.0 ELSE 0.0 END) AS bust_rate,
+                      avg(power(p.risk_probability - CASE WHEN v.busted THEN 1.0 ELSE 0.0 END, 2)) AS brier_score
                  FROM public.verification_records v
                  JOIN public.risk_predictions p ON p.id = v.prediction_id
                  JOIN public.prediction_batches b ON b.id = p.batch_id
@@ -212,6 +219,32 @@ def verification(limit: int = 30) -> dict:
                 WHERE b.status = 'published' AND m.approved_for_publication"""
         )
         summary_row = cur.fetchone()
+        sufficient = (
+            summary_row["verified_predictions"] >= 100
+            and summary_row["valid_days"] >= 10
+            and summary_row["model_count"] == 1
+            and summary_row["reference_count"] == 1
+        )
+        calibration_bins = []
+        if sufficient:
+            cur.execute(
+                """SELECT least(9, floor(p.risk_probability * 10)::integer) AS bucket,
+                          count(*) AS count,
+                          avg(p.risk_probability) AS mean_probability,
+                          avg(CASE WHEN v.busted THEN 1.0 ELSE 0.0 END) AS observed_rate
+                     FROM public.verification_records v
+                     JOIN public.risk_predictions p ON p.id = v.prediction_id
+                     JOIN public.prediction_batches b ON b.id = p.batch_id
+                     JOIN public.model_versions m ON m.id = b.model_version_id
+                    WHERE b.status = 'published' AND m.approved_for_publication
+                    GROUP BY bucket ORDER BY bucket"""
+            )
+            calibration_bins = [
+                {"lower": row["bucket"] / 10, "upper": (row["bucket"] + 1) / 10,
+                 "count": row["count"], "mean_probability": float(row["mean_probability"]),
+                 "observed_rate": float(row["observed_rate"])}
+                for row in cur.fetchall()
+            ]
         cur.execute(
             """SELECT v.id, l.name AS region_name, p.variable, p.valid_at,
                       v.observed_at, p.risk_probability, v.busted,
@@ -260,8 +293,17 @@ def verification(limit: int = 30) -> dict:
         "summary": {
             "verified_predictions": summary_row["verified_predictions"],
             "skill": None, "calibration": None,
-            "bust_rate": float(summary_row["bust_rate"]) if summary_row["bust_rate"] is not None else None,
+            "model_version": summary_row["model_version"] if sufficient else None,
+            "reference_kind": summary_row["reference_kind"] if sufficient else None,
+            "brier_score": float(summary_row["brier_score"]) if sufficient else None,
+            "mean_predicted_risk": float(summary_row["mean_predicted_risk"]) if sufficient else None,
+            "bust_rate": float(summary_row["bust_rate"]) if sufficient else None,
+            "calibration_bins": calibration_bins,
         },
         "cases": cases,
-        "message": "Skill and calibration require a larger held-out verification set.",
+        "message": (
+            "Descriptive performance for one model and one reference type; not skill against a baseline."
+            if sufficient else
+            "Performance needs at least 100 verified cases across 10 valid days for one model and reference type."
+        ),
     }

@@ -30,31 +30,42 @@ leaves incomplete days out of the training set. ERA5 is a **reanalysis proxy**,
 not an independent weather station observation. Do not describe comparisons
 against it as ground-truth verification.
 
-For a research backfill covering enough run dates for chronological splits:
+For a research backfill covering at least 125 distinct issued days for
+chronological splits and two ten-day gap periods:
 
 ```bash
-python -m pipelines.backfill --locations pipelines/research_locations.json --start-run 2025-06-01 --end-run 2025-08-31 --output data/pairs.csv --raw-dir data/raw
-python -m ml.research_train data/pairs.csv --output data/model
+python -m pipelines.backfill --locations pipelines/research_locations.json --start-run 2025-04-01 --end-run 2025-09-30 --output data/processed/pairs.csv --raw-dir data/raw
+python -m ml.research_train data/processed/pairs.csv --output data/processed/model
 ```
 
 Backfill accepts multi-year ranges. It records failed location/run requests in
 the manifest and never imputes missing values. Check the manifest, coverage,
-source license and evaluation before registering a model. Large backfills make
+source license and evaluation before registering a model. If the archive is
+collected in chunks, merge checked CSV files without duplicate cases:
+
+```bash
+python -m pipelines.merge_pairs data/processed/chunk1.csv data/processed/chunk2.csv --output data/processed/pairs.csv
+```
+
+Large backfills make
 many API requests; the default one-second pause limits request rate.
 
 After applying the Supabase migrations and setting `SUPABASE_DATABASE_URL` to
 the direct Postgres connection URI (server-side only):
 
 ```bash
-python -m ml.register_model --model data/model/model.json --evaluation data/model/evaluation.json --code research-2025-v1
+python -m ml.register_model --model data/processed/model/model.json --evaluation data/processed/model/evaluation.json --code research-2025-v1
 python -m pipelines.publish --model-code research-2025-v1 --run 2026-09-29 --locations pipelines/research_locations.json
 python -m pipelines.verify --lag-days 7
 ```
 
 Registration persists the small JSON model in `model_versions.artifact_json`,
 so subsequent workers do not require a local model file. It requires at least
-100 untouched test cases, 30 calibration cases and a better held-out Brier
-score than the historical-rate reference. The `--model` argument to publish is
+100 untouched test cases over at least 20 distinct issued days, 15 calibration
+issue days and 30 training issue days, two ten-day embargos between the three
+periods, a better held-out Brier score than the historical-rate reference,
+and expected calibration error at most 0.10 on untouched cases.
+The `--model` argument to publish is
 optional and, if given, must match the registered artifact exactly. Publication
 rejects any incomplete 10-day city forecast and is atomic in Postgres.
 

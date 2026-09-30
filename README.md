@@ -14,6 +14,8 @@ This repository is a deployable **research prototype**. Its measurable first rel
 | Archive, train, publish and verify jobs | `pipelines`, `ml` | GitHub Actions / local research runner |
 
 See [system architecture](docs/ARCHITECTURE.md) and [product contract](docs/PRODUCT.md).
+The first real-data [research evaluation](docs/RESEARCH_RESULTS.md) found that
+the baseline fails the calibration gate, so no risk model has been published.
 
 ## Run locally
 
@@ -33,13 +35,13 @@ The website and API can be deployed before research data is ready. In that state
 Install `pipelines/requirements.txt` in a trusted Python 3.12 environment and set `SUPABASE_DATABASE_URL` to a writable Supabase Postgres connection. The first backfill uses [Open-Meteo Single Runs](https://open-meteo.com/en/docs/single-runs-api) ECMWF forecasts and [ERA5 reanalysis](https://open-meteo.com/en/docs/historical-weather-api), aligned to UTC daily rainfall totals. The free API is for non-commercial research and requires [attribution](https://open-meteo.com/en/terms); a commercial launch needs an appropriate data plan and source review.
 
 ```bash
-python -m pipelines.backfill --locations pipelines/research_locations.json --start-run 2026-06-01 --end-run 2026-07-31 --output data/pairs.csv --raw-dir data/raw
-python -m ml.research_train data/pairs.csv --output data/model
-python -m ml.register_model --model data/model/model.json --evaluation data/model/evaluation.json --code research-v1
+python -m pipelines.backfill --locations pipelines/research_locations.json --start-run 2025-04-01 --end-run 2025-09-30 --output data/processed/pairs.csv --raw-dir data/raw
+python -m ml.research_train data/processed/pairs.csv --output data/processed/model
+python -m ml.register_model --model data/processed/model/model.json --evaluation data/processed/model/evaluation.json --code research-v1
 python -m pipelines.run_current --model-code research-v1
 ```
 
-The run dates above are examples; select a completed historical period. Backfill keeps source responses, checksums and a failure manifest. Training splits issuance times chronologically into training, calibration and untouched test periods. Registration refuses a model that lacks provenance, enough test cases, or improvement over the simple reference. `run_current` publishes a complete current 00 UTC forecast batch through the database publication gate and verifies older published days as the reference becomes available. See [pipeline details](pipelines/README.md).
+The run dates above are examples; select a completed historical period with at least 125 distinct issued days. Backfill keeps source responses, checksums and a failure manifest. Training splits issuance times chronologically into training, calibration and untouched test periods with a ten-day gap at each boundary so outcomes cannot be shared between periods. Registration refuses a model that lacks provenance, enough independent test dates, or improvement over the simple reference. `run_current` publishes a complete current 00 UTC forecast batch through the database publication gate and verifies older published days as the reference becomes available. See [pipeline details](pipelines/README.md).
 
 For daily operation, add repository secret `SUPABASE_DATABASE_URL` and repository variable `FBIE_MODEL_CODE` to GitHub Actions, then run the **Research forecast cycle** workflow once manually. Its scheduled run starts after 08:00 UTC. The workflow skips data steps until both values are configured.
 
